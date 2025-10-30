@@ -1,3 +1,3 @@
 # DyslexiaReadingAssistant
 AI-Powered Reading Assistant 
-Author - Omkar Hosur 
+Author - Omkar g Hosur ...
