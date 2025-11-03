@@ -4,17 +4,18 @@ import google.generativeai as genai
 import os
 import base64
 import requests
-import threading
 import time
-import pyttsx3
+import random
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+from gtts import gTTS
+import tempfile
+from playsound import playsound
 
 # Import our custom modules
 from tts_module import DyslexiaTTS
 from speech_module import recognize_speech
-from progress_db import ProgressDB
 
 # Load environment variables
 load_dotenv()
@@ -30,97 +31,82 @@ else:
         model = None
         st.warning("⚠️ Gemini model could not be initialized. Some features are disabled.")
 
-# Initialize progress database - Temporarily disabled
-# progress_db = ProgressDB()
-
-# ---- TTS Utilities (female voice selection) ----
-def init_tts_engine(rate: int = 160, volume: float = 1.0):
-    """Create and configure a pyttsx3 engine with a female voice when available.
-
-    Works on macOS (NSSpeechSynthesizer), Windows (SAPI5), Linux (espeak).
-    Falls back to the default voice if no explicit female voice is found.
+# ========================================
+# 🎨 SYNCHRONIZED LETTER HIGHLIGHTING + TTS
+# ========================================
+def spell_word_with_highlighting(word, slow_letters=True, slow_word=False):
+    """Spell word letter-by-letter with synchronized visual highlighting and audio."""
+    placeholder = st.empty()
+    colors = ["#ff4b5c", "#f9ed69", "#6a2c70", "#1fab89", "#00bcd4", "#ff9800", "#cddc39"]
+    
+    word_upper = word.upper()
+    
+    # Step 1: Spell each letter with synchronized audio + visual
+    for i, letter in enumerate(word_upper):
+        # Choose random color for this letter
+        color = random.choice(colors)
+        
+        # Build HTML showing all letters, with current one highlighted
+        html_parts = []
+        for j, char in enumerate(word_upper):
+            if j == i:
+                # Current letter - highlighted in color
+                html_parts.append(
+                    f"<span style='color:{color}; font-size:80px; font-weight:bold; "
+                    f"text-shadow:3px 3px 8px rgba(0,0,0,0.4);'>{char}</span>"
+                )
+            else:
+                # Other letters - dimmed
+                html_parts.append(
+                    f"<span style='color:#cccccc; font-size:64px; font-weight:bold;'>{char}</span>"
+                )
+        
+        # Display the word with current letter highlighted
+        full_html = f"""
+        <div style='text-align:center; letter-spacing:12px; margin:30px 0;'>
+            {''.join(html_parts)}
+        </div>
+        """
+        placeholder.markdown(full_html, unsafe_allow_html=True)
+        
+        # Play audio for this letter (synchronized!)
+        try:
+            letter_tts = gTTS(text=letter, lang='en', slow=slow_letters)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                letter_tts.save(f.name)
+                playsound(f.name)
+                os.remove(f.name)
+        except Exception as e:
+            st.error(f"Audio error for letter {letter}: {e}")
+        
+        # Small pause between letters
+        time.sleep(0.3)
+    
+    # Step 2: Show full word and speak it
+    time.sleep(0.5)
+    
+    final_html = f"""
+    <div style='text-align:center; margin:30px 0;'>
+        <div style='font-size:72px; font-weight:bold; color:#2E86AB; 
+                    text-shadow:2px 2px 6px rgba(0,0,0,0.3); letter-spacing:8px;'>
+            {word_upper}
+        </div>
+        <div style='font-size:24px; color:#666; margin-top:15px;'>
+            Now say it together! 👇
+        </div>
+    </div>
     """
+    placeholder.markdown(final_html, unsafe_allow_html=True)
+    
+    # Speak full word
     try:
-        engine = pyttsx3.init()
-        # Rate and volume
-        try:
-            engine.setProperty('rate', int(rate))
-        except Exception:
-            pass
-        try:
-            engine.setProperty('volume', float(volume))
-        except Exception:
-            pass
-
-        # Attempt to pick a female voice
-        try:
-            voices = engine.getProperty('voices') or []
-            selected = None
-            preferred_keywords = [
-                'female', 'samantha', 'victoria', 'tessa', 'karen', 'serena',
-                'zira', 'eva', 'susan', 'heather'
-            ]
-            for v in voices:
-                vname = (getattr(v, 'name', '') or '').lower()
-                vid = (getattr(v, 'id', '') or '').lower()
-                if any(k in vname or k in vid for k in preferred_keywords):
-                    selected = v
-                    break
-            if selected is None and voices:
-                # fallback to the first voice to ensure speaking works
-                selected = voices[0]
-            if selected is not None:
-                engine.setProperty('voice', selected.id)
-        except Exception:
-            pass
-        return engine
-    except Exception:
-        return None
-
-
-def ensure_tts_engine(rate: int, volume: float):
-    """Singleton TTS engine stored in Streamlit session_state."""
-    key = "_tts_engine"
-    if key not in st.session_state or st.session_state[key] is None:
-        st.session_state[key] = init_tts_engine(rate=rate, volume=volume)
-        # Remember current settings
-        st.session_state["_tts_rate"] = rate
-        st.session_state["_tts_vol"] = volume
-    else:
-        # Update properties if changed
-        try:
-            if st.session_state.get("_tts_rate") != rate:
-                st.session_state[key].setProperty('rate', int(rate))
-                st.session_state["_tts_rate"] = rate
-            if st.session_state.get("_tts_vol") != volume:
-                st.session_state[key].setProperty('volume', float(volume))
-                st.session_state["_tts_vol"] = volume
-        except Exception:
-            pass
-    return st.session_state[key]
-
-
-def speak_text_or_fallback(text: str, rate: int, volume: float):
-    """Try pyttsx3; if it fails (common on some macOS envs), fallback to 'say'."""
-    engine = ensure_tts_engine(rate=rate, volume=volume)
-    if engine is not None:
-        try:
-            engine.say(text)
-            engine.runAndWait()
-            return True
-        except Exception:
-            pass
-    # Fallback for macOS using built-in 'say'
-    try:
-        import platform, subprocess, shlex
-        if platform.system() == 'Darwin':
-            # Prefer Samantha if available
-            cmd = f"say -v Samantha {shlex.quote(text)}"
-            subprocess.run(cmd, shell=True, check=True)
-            return True
-    except Exception:
-        pass
-    return False
+        word_tts = gTTS(text=word, lang='en', slow=slow_word)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+            word_tts.save(f.name)
+            playsound(f.name)
+            os.remove(f.name)
+    except Exception as e:
+        st.error(f"Audio error for full word: {e}")
 
 # Object Detection Functions
 def get_text_from_image_gemini(frame):
@@ -165,7 +151,6 @@ def get_object_detection_gemini(frame):
     """Detects objects in image using Gemini API with retry logic."""
     if not api_key:
         return None
-    import time
     
     max_retries = 3
     retry_delay = 1
@@ -248,7 +233,7 @@ def get_object_detection_gemini(frame):
                 st.error(f"❌ API request failed after multiple attempts: {e}")
                 return None
                 
-        except (KeyError, IndexError) as e:
+        except (KeyError, IndexIndex) as e:
             st.error(f"❌ Gemini Response Parsing Error: {e}")
             return None
             
@@ -270,32 +255,53 @@ def get_pronunciation_feedback(word):
             {
                 "parts": [
                     {
-                        "text": f"For a student with dyslexia reading '{word}': "
-                                "Provide interactive pronunciation feedback. "
-                                "Break it down letter by letter with phonetic sounds (e.g., 'c-a-t: /k/ /æ/ /t/'). "
-                                "Keep it short, encouraging, and dyslexia-friendly."
+                        "text": (
+                            f"Teach a dyslexic student how to pronounce the word '{word}' "
+                            "in the simplest and shortest way possible. "
+                            "Use only plain English letters and sounds — no phonetic symbols. "
+                            "Keep the explanation within 3–4 short lines. "
+                            "Example for 'Phone': 'PH says fuh, O says oh, N says nn, E is silent. "
+                            "Now say it together — fuh-oh-nn-e. Great job!' "
+                            "Always end with a final sound breakdown line like: '🔠 Sound breakdown: fuh-oh-nn-e'. "
+                            "Be clear, warm, and encouraging." 
+                            "PH says fuh"
+                            "O says oh"
+                            "N says nn"
+                            "E is silent"
+                            " 🔠 Sound breakdown: fuh-oh-nn-e"
+                            "it should show like this example "
+                        )
                     }
                 ]
             }
         ]
     }
-    
+
     headers = {'Content-Type': 'application/json'}
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    
+    api_url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.5-flash:generateContent?key={api_key}"
+    )
+
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=10)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=25)
         response.raise_for_status()
         result = response.json()
+
         candidates = result.get('candidates', [])
         if candidates and 'content' in candidates[0]:
             parts = candidates[0]['content'].get('parts', [])
-            return parts[0].get('text', 'No feedback received.') if parts else 'No feedback received.'
+            text = parts[0].get('text', '').strip() if parts else ''
+            return text or "No feedback received."
         return "No feedback received."
+
+    except requests.exceptions.Timeout:
+        return "⚠️ Gemini took too long to respond. Please try again."
     except requests.exceptions.RequestException as e:
         return f"Feedback Error: {e}"
     except (KeyError, IndexError) as e:
         return f"Feedback Parsing Error: {e}"
+
 
 # Streamlit UI
 st.set_page_config(
@@ -324,8 +330,8 @@ st.markdown("""
 h1,h2,h3,h4,h5,h6 { font-family: 'Comfortaa', cursive !important; background: linear-gradient(135deg,#667eea 0%, #f093fb 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; letter-spacing:2px; }
 
 /* Letter feedback */
-.letter-correct { background: linear-gradient(135deg,#11998e 0%,#38ef7d 100%); color:#000; padding:6px 10px; border-radius:10px; font-weight:700; display:inline-block; }
-.letter-incorrect { background: linear-gradient(135deg,#fa709a 0%,#fee140 100%); color:#000; padding:6px 10px; border-radius:10px; font-weight:700; display:inline-block; }
+.letter-correct { background: linear-gradient(135deg,#11998e 0%,#38ef7d 100%); color:#1a1a1a !important; padding:6px 10px; border-radius:10px; font-weight:700; display:inline-block; }
+.letter-incorrect { background: linear-gradient(135deg,#fa709a 0%,#fee140 100%); color:#1a1a1a !important; padding:6px 10px; border-radius:10px; font-weight:700; display:inline-block; }
 
 /* Inputs */
 .stTextInput>div>div>input { background: rgba(255,255,255,0.2); backdrop-filter: blur(8px); border:1px solid rgba(255,255,255,0.3); border-radius:10px; color:#fff; }
@@ -336,8 +342,6 @@ h1,h2,h3,h4,h5,h6 { font-family: 'Comfortaa', cursive !important; background: li
 </style>
 """, unsafe_allow_html=True)
 
-# Removed complex JS interactions to keep interface stable
-
 # Initialize session state
 if 'user_id' not in st.session_state:
     st.session_state.user_id = "user_" + str(int(time.time()))
@@ -347,6 +351,10 @@ if 'detected_text' not in st.session_state:
     st.session_state.detected_text = ""
 if 'current_word' not in st.session_state:
     st.session_state.current_word = ""
+
+# Initialize TTS engine
+if 'tts_engine' not in st.session_state:
+    st.session_state.tts_engine = None
 
 # Header with gradient animated title
 st.markdown("""
@@ -366,15 +374,13 @@ st.markdown("---")
 with st.sidebar:
     st.header("👤 User Settings")
     username = st.text_input("Enter your name:", value="Student")
-    # progress_db.update_user(st.session_state.user_id, username)
     
     st.header("🔧 TTS Settings")
-    rate_letters = st.slider("Letter Reading Speed", 100, 200, 150)
-    rate_word = st.slider("Word Reading Speed", 120, 200, 160)
-    volume = st.slider("Volume", 0.1, 1.0, 1.0)
+    slow_letters = st.checkbox("Slow letter pronunciation", value=True)
+    slow_word = st.checkbox("Slow word pronunciation", value=False)
     
     st.header("📊 Progress")
-    st.info("Progress tracking will be available after adding your API key")
+    st.info("Keep practicing to improve your reading skills!")
 
 # Main content area
 col1, col2 = st.columns([2, 1])
@@ -478,69 +484,54 @@ with col1:
                     col_tts1, col_tts2 = st.columns(2)
                     
                     with col_tts1:
-                        if st.button("🔤 Spell Letters", key="spell_letters"):
+                        # ========================================
+                        # 🎨 SYNCHRONIZED SPELL AND READ BUTTON
+                        # ========================================
+                        if st.button("🔤 Spell and Read Word", key="spell_word"):
                             if st.session_state.current_word:
-                                word = st.session_state.current_word.upper()
-
-                                # Create a placeholder for visual progress
-                                spelling_placeholder = st.empty()
-
-                                # Initialize one engine with female voice
-                                import time as _time
-                                engine = ensure_tts_engine(rate=rate_letters, volume=volume)
-                                if engine is None:
-                                    st.error("TTS engine not available on this system.")
-                                else:
-                                    # Speak letter-by-letter with highlight (lowercase audio)
-                                    for i, letter in enumerate(word):
-                                        # Visual display with current letter highlighted
-                                        word_display = ""
-                                        for j, char in enumerate(word):
-                                            disp_char = char.upper()
-                                            if j == i:
-                                                word_display += f"<span style='background-color:#FFD700;color:#000;padding:5px;border-radius:5px;font-weight:bold;font-size:24px;'>{disp_char}</span>"
-                                            elif j < i:
-                                                word_display += f"<span style='background-color:#90EE90;color:#000;padding:5px;border-radius:5px;font-weight:bold;font-size:20px;'>{disp_char}</span>"
-                                            else:
-                                                word_display += f"<span style='color:#666;font-size:18px;'>{disp_char}</span>"
-                                            word_display += " "
-                                        spelling_placeholder.markdown(
-                                            f"<div style='text-align:center;margin:10px 0;'><h2 style=\"font-family: 'OpenDyslexic', Arial, sans-serif;\">{word_display}</h2></div>",
-                                            unsafe_allow_html=True,
-                                        )
-                                        ok = speak_text_or_fallback(letter.lower(), rate=rate_letters, volume=volume)
-                                        if not ok:
-                                            st.error("Audio output failed for this letter.")
-                                        _time.sleep(0.2)
-
-                                    # Final green display
-                                    final_display = " ".join(
-                                        f"<span style='background-color:#90EE90;color:#000;padding:5px;border-radius:5px;font-weight:bold;font-size:20px;'>{c.upper()}</span>"
-                                        for c in word
+                                try:
+                                    spell_word_with_highlighting(
+                                        st.session_state.current_word,
+                                        slow_letters=slow_letters,
+                                        slow_word=slow_word
                                     )
-                                    spelling_placeholder.markdown(
-                                        f"<div style='text-align:center;margin:10px 0;'><h2 style=\"font-family: 'OpenDyslexic', Arial, sans-serif;\">{final_display}</h2><p style='color:green;font-weight:bold;'>✅ Spelling Complete!</p></div>",
-                                        unsafe_allow_html=True,
-                                    )
-                                    st.success("🔤 Letters spelled!")
+                                    st.success("🔤 Word spelled and read!")
+                                except Exception as e:
+                                    st.error(f"❌ TTS Error: {e}")
                             else:
                                 st.error("❌ No word to spell. Please detect an object or enter a word first.")
                     
                     with col_tts2:
-                        if st.button("📢 Read Word", key="read_word"):
+                        if st.button("🔢 Read Word Only", key="read_word_only"):
                             if st.session_state.current_word:
-                                ok = speak_text_or_fallback(st.session_state.current_word, rate=rate_word, volume=volume)
-                                if ok:
-                                    st.success("📢 Word read!")
-                                else:
-                                    st.error("Failed to speak. Check your audio output device.")
+                                with st.spinner("🔊 Speaking..."):
+                                    try:
+                                        # Create TTS for word only
+                                        tts = gTTS(
+                                            text=st.session_state.current_word,
+                                            lang='en',
+                                            slow=slow_word
+                                        )
+                                        
+                                        # Save and play
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                                            tts.save(f.name)
+                                            playsound(f.name)
+                                            os.remove(f.name)
+                                        
+                                        st.success("🔢 Word read!")
+                                    except Exception as e:
+                                        st.error(f"❌ TTS Error: {e}")
                             else:
                                 st.error("❌ No word to read. Please detect an object or enter a word first.")
                     
                     # Pronunciation feedback
                     if st.button("💡 Get Pronunciation Help", key="pronunciation_help"):
-                        feedback = get_pronunciation_feedback(st.session_state.current_word)
-                        st.info(f"💡 **Pronunciation Help:**\n{feedback}")
+                        with st.spinner("Getting pronunciation help..."):
+                            feedback = get_pronunciation_feedback(st.session_state.current_word)
+                        
+                        st.subheader("💡 Pronunciation Help")
+                        st.markdown(feedback)
                     
                     # Speech Recognition Section
                     st.markdown("---")
@@ -605,7 +596,7 @@ with col1:
             st.subheader("📝 Manual Input (Fallback)")
             st.write("If object detection isn't working, you can manually enter a word to practice:")
             
-            manual_word = st.text_input("Enter a word to practice:", key="manual_word_input")
+            manual_word = st.text_input("Enter a word:", key="manual_word_input")
             if st.button("✅ Use Manual Word", key="use_manual_word"):
                 if manual_word and manual_word.strip():
                     st.session_state.detected_text = manual_word.strip()
@@ -632,9 +623,8 @@ with col2:
     # TTS Settings
     st.subheader("🔧 TTS Settings")
     st.write("Adjust these settings to customize the speech:")
-    st.write(f"- Letter Speed: {rate_letters}")
-    st.write(f"- Word Speed: {rate_word}")
-    st.write(f"- Volume: {volume}")
+    st.write(f"- Slow Letters: {'Yes' if slow_letters else 'No'}")
+    st.write(f"- Slow Word: {'Yes' if slow_word else 'No'}")
     
     # Instructions
     st.subheader("📋 How to Use")
@@ -642,7 +632,7 @@ with col2:
     1. **🎥 Start Camera** - Opens your webcam
     2. **📸 Capture Frame** - Take a picture of your object
     3. **🔍 Detect Objects** - AI identifies the object
-    4. **🔤 Spell Letters** - Hear each letter pronounced
+    4. **🔤 Spell and Read** - Letters light up as they're spoken!
     5. **🎤 Speech Recognition** - Practice pronunciation
     """)
     
@@ -653,6 +643,7 @@ with col2:
     - Ensure good lighting for better detection
     - Speak clearly for speech recognition
     - Use manual input if detection fails
+    - Watch the letters light up as you hear them!
     """)
 
 # Footer
@@ -660,9 +651,9 @@ st.markdown("---")
 st.markdown("### 🎯 Features Available:")
 st.markdown("""
 - **📷 Object Detection**: Identify objects using your camera
-- **📝 Text Extraction**: Extract text from images
-- **🔊 Text-to-Speech**: Hear words spelled letter by letter
+- **🔍 Text Extraction**: Extract text from images
+- **🔊 Synchronized TTS**: Letters light up EXACTLY when spoken!
+- **🎨 Letter Highlighting**: Visual + Audio learning combined
 - **🎤 Speech Recognition**: Practice pronunciation with feedback
-- **📊 Progress Tracking**: Monitor your learning progress
 - **💡 AI Feedback**: Get pronunciation help from AI
 """)
