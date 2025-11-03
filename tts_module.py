@@ -1,46 +1,52 @@
-import pyttsx3
+from gtts import gTTS
+import os
+from playsound import playsound
+import tempfile
+import time
 
 class DyslexiaTTS:
-    def __init__(self, rate_letters=150, rate_word=160, volume=1.0):
+    def __init__(self, lang='en', slow_letters=True, slow_word=False):
         """
-        Initialize default parameters for speech rates and volume.
+        Initialize TTS settings.
+        :param lang: Language code (default 'en' for English)
+        :param slow_letters: Speak letters slowly for clarity
+        :param slow_word: Speak word slowly or normally
         """
-        self.rate_letters = rate_letters
-        self.rate_word = rate_word
-        self.volume = volume
-        self.spoken_words = set()  # Track spoken words to avoid repetition
+        self.lang = lang
+        self.slow_letters = slow_letters
+        self.slow_word = slow_word
+        self.spoken_words = set()  # To avoid repetition
 
     def speak_text(self, word):
         """
-        Pronounce a word letter by letter, then the full word immediately.
-        Will speak each word only once.
+        Spell and pronounce a given word.
+        Speaks letter-by-letter first, then the whole word.
         """
         word = word.strip()
-        if not word or word in self.spoken_words:
-            return  # Skip if empty or already spoken
+        if not word or word.lower() in self.spoken_words:
+            return
 
         print(f"🔤 Speaking: {word}")
-        self.spoken_words.add(word)  # Mark as spoken
+        self.spoken_words.add(word.lower())
 
-        # Create a fresh engine instance
-        engine = pyttsx3.init()
-        engine.setProperty('volume', self.volume)
+        # Create temporary files for audio
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f_letters, \
+             tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f_word:
 
-        # Letters spaced for clear pronunciation
-        letters_spaced = " ".join(list(word.upper()))
-        engine.setProperty('rate', self.rate_letters)
-        engine.say(letters_spaced)
+            # 1️⃣ Spell letter by letter
+            letters = " ".join(list(word.upper()))
+            tts_letters = gTTS(text=letters, lang=self.lang, slow=self.slow_letters)
+            tts_letters.save(f_letters.name)
+            playsound(f_letters.name)
 
-        # Full word immediately after
-        engine.setProperty('rate', self.rate_word)
-        engine.say(word)
+            time.sleep(0.3)  # short pause between letter spelling and full word
 
-        engine.runAndWait()
-        engine.stop()
-from tts_module import DyslexiaTTS
+            # 2️⃣ Speak full word
+            tts_word = gTTS(text=word, lang=self.lang, slow=self.slow_word)
+            tts_word.save(f_word.name)
+            playsound(f_word.name)
 
-tts = DyslexiaTTS(rate_letters=150, rate_word=160)
+        # Cleanup temp files
+        os.remove(f_letters.name)
+        os.remove(f_word.name)
 
-words = ["hello" ]  # last "Bottle" won't repeat
-for w in words:
-    tts.speak_text(w)

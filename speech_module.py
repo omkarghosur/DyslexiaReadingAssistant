@@ -31,6 +31,6 @@ def recognize_speech(expected_word):
 
 # Example usage
 if __name__ == "__main__":
-    feedback = recognize_speech("Bottle")
+    feedback = recognize_speech("Hello")
     if feedback:
         print("✅ Letter-by-letter feedback:", feedback)
