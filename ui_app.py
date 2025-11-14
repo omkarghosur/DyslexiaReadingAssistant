@@ -16,7 +16,7 @@ import speech_recognition as sr
 
 # Import our custom modules
 from tts_module import DyslexiaTTS
-from speech_module import recognize_speech
+from speech_module import recognize_speech_unified
 
 # Load environment variables
 load_dotenv()
@@ -111,248 +111,15 @@ def spell_word_with_highlighting(word, slow_letters=True, slow_word=False):
         st.error(f"Audio error for full word: {e}")
 
 # ========================================
-# 🎤 UNIFIED SPEECH RECOGNITION SYSTEM
+# 🎤 BACKWARD COMPATIBILITY ALIASES
 # ========================================
-def recognize_speech_unified(target_word, mode="advanced", slow_speed=False):
-    """
-    Unified speech recognition system that works for both basic and advanced modes.
-    
-    Args:
-        target_word: The target word to practice
-        mode: "advanced" (with real-time highlighting) or "basic" (simple feedback)
-        slow_speed: If True, gives more time for pronunciation
-    
-    Returns:
-        Dictionary with letter-by-letter feedback
-    """
-    if not target_word:
-        return None
-    
-    # Create placeholders for dynamic updates
-    word_display_placeholder = st.empty()
-    status_placeholder = st.empty()
-    
-    target_upper = target_word.upper()
-    
-    # Display function for word state
-    def display_word_state(recognized_letters, current_index=-1, is_listening=False):
-        """Display word with color-coded letters based on recognition state"""
-        html_parts = []
-        colors = ["#ff4b5c", "#f9ed69", "#6a2c70", "#1fab89", "#00bcd4", "#ff9800", "#cddc39"]
-        
-        for i, letter in enumerate(target_upper):
-            if i < len(recognized_letters):
-                if recognized_letters[i] == letter:
-                    # Correct letter - green gradient
-                    html_parts.append(
-                        f"<span style='font-size:70px; font-weight:bold; "
-                        f"text-shadow:2px 2px 6px rgba(0,255,0,0.4); "
-                        f"font-family: \"Comic Sans MS\", \"Comfortaa\", cursive; "
-                        f"background: linear-gradient(135deg,#11998e 0%,#38ef7d 100%); "
-                        f"-webkit-background-clip:text; -webkit-text-fill-color:transparent;'>{letter}</span>"
-                    )
-                else:
-                    # Incorrect letter - red
-                    html_parts.append(
-                        f"<span style='color:#ff4b5c; font-size:70px; font-weight:bold; "
-                        f"text-shadow:2px 2px 6px rgba(255,0,0,0.4); "
-                        f"font-family: \"Comic Sans MS\", \"Comfortaa\", cursive;'>{letter}</span>"
-                    )
-            elif i == current_index and mode == "advanced":
-                # Currently being recognized - animated color
-                color = random.choice(colors)
-                html_parts.append(
-                    f"<span style='color:{color}; font-size:80px; font-weight:bold; "
-                    f"text-shadow:3px 3px 10px rgba(0,0,0,0.5); "
-                    f"font-family: \"Comic Sans MS\", \"Comfortaa\", cursive; "
-                    f"animation: pulse 0.5s infinite;'>{letter}</span>"
-                )
-            else:
-                # Not yet recognized - gray
-                gray_color = "#ffffff" if is_listening else "#cccccc"
-                html_parts.append(
-                    f"<span style='color:{gray_color}; font-size:64px; font-weight:bold; "
-                    f"font-family: \"Comic Sans MS\", \"Comfortaa\", cursive;'>{letter}</span>"
-                )
-        
-        word_html = f"""
-        <style>
-        @keyframes pulse {{
-            0%, 100% {{ transform: scale(1); }}
-            50% {{ transform: scale(1.1); }}
-        }}
-        </style>
-        <div style='text-align:center; letter-spacing:15px; margin:40px 0; padding:20px;
-                    background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
-                    border-radius:20px; border:2px solid rgba(255,255,255,0.2);'>
-            {''.join(html_parts)}
-        </div>
-        """
-        word_display_placeholder.markdown(word_html, unsafe_allow_html=True)
-    
-    # Initial display - show full word
-    display_word_state([])
-    status_placeholder.info("🎤 **Get Ready!** Speak the word clearly when you see 'Listening...'")
-    time.sleep(1.5)
-    
-    # Initialize speech recognizer with optimized settings
-    recognizer = sr.Recognizer()
-    
-    # Optimized recognizer settings for better accuracy
-    recognizer.energy_threshold = 4000  # Higher threshold to reduce background noise
-    recognizer.dynamic_energy_threshold = True
-    recognizer.pause_threshold = 0.8  # Wait 0.8s of silence before considering phrase complete
-    recognizer.phrase_threshold = 0.3
-    recognizer.non_speaking_duration = 0.5
-    
-    recognized_letters = []
-    
-    try:
-        # Try to access microphone with error handling
-        try:
-            with sr.Microphone() as source:
-                # Adjust for ambient noise
-                status_placeholder.warning("🎤 **Calibrating...** Please wait (be quiet for 2 seconds)...")
-                display_word_state([], is_listening=True)
-                recognizer.adjust_for_ambient_noise(source, duration=2)
-                
-                # Ready to listen
-                status_placeholder.success(f"🎤 **Listening...** Say '{target_word}' clearly now!")
-                display_word_state([], is_listening=True)
-                
-                # Listen with longer timeout for better results
-                timeout_duration = 15 if slow_speed else 10
-                phrase_limit = 8 if slow_speed else 6
-                
-                audio = recognizer.listen(source, timeout=timeout_duration, phrase_time_limit=phrase_limit)
-                
-                # Processing audio
-                status_placeholder.info("🔄 **Processing...** Analyzing your pronunciation...")
-                
-                # Try Google Speech Recognition
-                try:
-                    spoken_text = recognizer.recognize_google(audio, language='en-US').upper()
-                    status_placeholder.success(f"✅ **Heard:** '{spoken_text}'")
-                    
-                    # Remove spaces and special characters for comparison
-                    spoken_clean = ''.join(c for c in spoken_text if c.isalnum())
-                    
-                    # Analyze letter by letter with animation
-                    for i, letter in enumerate(target_upper):
-                        display_word_state(recognized_letters, current_index=i, is_listening=True)
-                        status_placeholder.info(f"🎤 Say the letter: **{letter}**")
-                             
-                        try:   
-                            partial_audio = recognizer.listen(source, timeout=3, phrase_time_limit=1.5) 
-                            partial_text = recognizer.recognize_google(partial_audio, language='en-US').upper()
-
-                            if letter in partial_text:
-                                recognized_letters.append(letter)
-                                display_word_state(recognized_letters)
-                                st.success(f"✅ Heard: {letter}")
-                            else:
-                                recognized_letters.append('_')
-                                display_word_state(recognized_letters)
-                                st.warning(f"⚠️ Letter '{letter}' not detected")
-
-                        except sr.UnknownValueError:
-                            recognized_letters.append('_')
-                            display_word_state(recognized_letters)
-                            st.warning(f"❌ Couldn't understand '{letter}' — try again")
-
-                        except sr.WaitTimeoutError:
-                            recognized_letters.append('_')
-                            display_word_state(recognized_letters)
-                            st.warning(f"⏱️ No sound detected for '{letter}'")
-                        # ✅ Final display after loop
-                        display_word_state(recognized_letters)        
-                        
-                        # Compare letters with multiple strategies
-                        letter_found = False
-                        
-                        # Strategy 1: Position-based matching
-                        if i < len(spoken_clean) and spoken_clean[i] == target_letter:
-                            recognized_letters.append(target_letter)
-                            letter_found = True
-                        # Strategy 2: Contains matching (for out-of-order speech)
-                        elif target_letter in spoken_clean:
-                            # Count occurrences to avoid reusing same letter
-                            target_count = target_upper[:i+1].count(target_letter)
-                            spoken_count = spoken_clean.count(target_letter)
-                            if spoken_count >= target_count:
-                                recognized_letters.append(target_letter)
-                                letter_found = True
-                        
-                        if not letter_found:
-                            recognized_letters.append('_')
-                        
-                        # Update display with recognition result
-                        if mode == "advanced":
-                            display_word_state(recognized_letters)
-                            time.sleep(0.2)
-                    
-                    # Final result display
-                    display_word_state(recognized_letters)
-                    
-                    # Build detailed feedback dictionary
-                    feedback = {}
-                    for i, letter in enumerate(target_upper):
-                        if i < len(recognized_letters) and recognized_letters[i] == letter:
-                            feedback[letter] = "correct"
-                        else:
-                            feedback[letter] = "incorrect"
-                    
-                    status_placeholder.success("✅ **Analysis Complete!** Check your results below.")
-                    return feedback
-                    
-                except sr.UnknownValueError:
-                    status_placeholder.error("❌ **Could not understand audio.**")
-                    st.warning("💡 **Tips to improve:**")
-                    st.write("- Speak louder and more clearly")
-                    st.write("- Move closer to your microphone")
-                    st.write("- Reduce background noise")
-                    st.write("- Spell out the word letter by letter: P-H-O-N-E")
-                    return None
-                    
-                except sr.RequestError as e:
-                    status_placeholder.error(f"❌ **Speech service error:** {str(e)}")
-                    st.error("💡 **Connection issue detected:**")
-                    st.write("- Check your internet connection")
-                    st.write("- Try again in a few moments")
-                    st.write("- Use the 'Basic Recognition' button as fallback")
-                    return None
-        
-        except OSError as e:
-            status_placeholder.error(f"❌ **Microphone access error:** {str(e)}")
-            st.error("💡 **Microphone troubleshooting:**")
-            st.write("- Ensure microphone is connected")
-            st.write("- Check microphone permissions in browser settings")
-            st.write("- Try refreshing the page")
-            st.write("- Make sure no other app is using the microphone")
-            return None
-                
-    except sr.WaitTimeoutError:
-        status_placeholder.error("⏱️ **Timeout!** No speech detected.")
-        st.warning("💡 **Please:**")
-        st.write("- Click the button again")
-        st.write("- Speak immediately when you see 'Listening...'")
-        st.write("- Make sure your microphone is working")
-        return None
-        
-    except Exception as e:
-        status_placeholder.error(f"❌ **Unexpected error:** {str(e)}")
-        st.error("💡 **Something went wrong. Please:**")
-        st.write("- Try refreshing the page")
-        st.write("- Check your microphone settings")
-        st.write("- Use manual input as a fallback")
-        return None
-
-# Object Detection Functions
-
-# ✅ Fix: Make old function name work
+# Use the imported function from speech_module
+recognize_speech = recognize_speech_unified
 recognize_speech_with_highlighting = recognize_speech_unified
 
-
+# ========================================
+# OBJECT DETECTION FUNCTIONS
+# ========================================
 
 def get_text_from_image_gemini(frame):
     """Extracts text from image using Gemini API."""
@@ -537,7 +304,10 @@ def get_pronunciation_feedback(word):
         return f"Feedback Parsing Error: {e}"
 
 
-# Streamlit UI
+# ========================================
+# STREAMLIT UI
+# ========================================
+
 st.set_page_config(
     page_title="AI Reading Assistant",
     page_icon="📚",
@@ -569,7 +339,6 @@ st.markdown("""
 h1,h2,h3,h4,h5,h6 { font-family: "Comic Sans MS", "Comfortaa", cursive !important; background: linear-gradient(135deg,#667eea 0%, #f093fb 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; letter-spacing:2px; }
 
 /* Letter feedback */
-/* Letter feedback */
 .letter-correct {
     background: linear-gradient(135deg,#38ef7d 0%,#11998e 100%);
     -webkit-background-clip: text;
@@ -585,7 +354,6 @@ h1,h2,h3,h4,h5,h6 { font-family: "Comic Sans MS", "Comfortaa", cursive !importan
     font-weight: 900;
     font-size: 48px;
 }
-
 
 /* Inputs */
 .stTextInput>div>div>input { background: rgba(255,255,255,0.2); backdrop-filter: blur(8px); border:1px solid rgba(255,255,255,0.3); border-radius:10px; color:#fff; font-family: "Comic Sans MS", "Comfortaa", cursive !important; }
@@ -780,7 +548,7 @@ with col1:
                         st.markdown(feedback)
                     
                     # ========================================
-                    # 🎤 ADVANCED SPEECH RECOGNITION SECTION
+                    # 🎤 SPEECH RECOGNITION SECTION
                     # ========================================
                     st.markdown("---")
                     st.header("🎤 Speech Recognition Practice")
@@ -793,7 +561,7 @@ with col1:
                                 background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
                                 border-radius:15px; border:2px solid rgba(255,255,255,0.2);'>
                         <p style='font-size:20px; color:#fff; margin-bottom:10px; font-family: "Comic Sans MS", "Comfortaa", cursive;'>
-                            📝 Word to practice:
+                            🎯 Word to practice:
                         </p>
                         <p style='font-size:48px; font-weight:bold; color:#2E86AB; letter-spacing:8px;
                                   text-shadow:2px 2px 6px rgba(0,0,0,0.3); font-family: "Comic Sans MS", "Comfortaa", cursive;'>
@@ -808,7 +576,7 @@ with col1:
                     # Speech recognition button with advanced highlighting
                     if st.button("🎤 Start Advanced Speech Recognition", key="start_advanced_speech_recognition"):
                         st.markdown("---")
-                        feedback = recognize_speech_unified(st.session_state.current_word, mode="advanced")
+                        feedback = recognize_speech_unified(st.session_state.current_word, mode="advanced", slow_speed=slow_word)
                             
                         if feedback:
                             st.success("✅ Speech recognition completed!")
@@ -819,7 +587,7 @@ with col1:
                             
                             # Create a formatted display of the word with correct letters highlighted
                             word_display = ""
-                            for i, (letter, status) in enumerate(feedback.items()):
+                            for letter, status in feedback.items():
                                 if status == "correct":
                                     word_display += f"<span class='letter-correct'>{letter}</span>"
                                 else:
@@ -864,7 +632,7 @@ with col1:
                     st.subheader("🎙️ Basic Speech Recognition (Fallback)")
                     if st.button("🎙️ Use Basic Recognition", key="basic_speech_recognition"):
                         with st.spinner("🎤 Listening... Please speak now!"):
-                            feedback = recognize_speech(st.session_state.current_word)
+                            feedback = recognize_speech_unified(st.session_state.current_word, mode="basic", slow_speed=slow_word)
                             
                         if feedback:
                             st.success("✅ Speech recognition completed!")
@@ -873,7 +641,7 @@ with col1:
                             st.subheader("📊 Letter-by-Letter Feedback:")
                             
                             word_display = ""
-                            for i, (letter, status) in enumerate(feedback.items()):
+                            for letter, status in feedback.items():
                                 if status == "correct":
                                     word_display += f"<span class='letter-correct'>{letter}</span>"
                                 else:
@@ -909,3 +677,65 @@ with col1:
                                 st.info("💪 Keep trying! Practice makes perfect!")
                         else:
                             st.error("❌ Speech recognition failed. Please try again.")
+            
+            # Release camera
+            cap.release()
+
+with col2:
+    st.header("📝 Manual Input")
+    
+    # Manual word input section
+    st.subheader("Type a Word to Practice")
+    manual_word = st.text_input("Enter a word:", value="", key="manual_word_input")
+    
+    if st.button("🎯 Practice This Word", key="practice_manual_word"):
+        if manual_word and manual_word.strip():
+            st.session_state.current_word = manual_word.strip()
+            st.session_state.detected_text = manual_word.strip()
+            st.success(f"✅ Now practicing: **{manual_word.strip()}**")
+        else:
+            st.error("❌ Please enter a valid word!")
+    
+    # Quick practice words
+    st.markdown("---")
+    st.subheader("🎓 Quick Practice Words")
+    
+    practice_words = {
+        "Easy": ["CAT", "DOG", "SUN", "TREE", "BOOK"],
+        "Medium": ["PHONE", "WATER", "HAPPY", "SCHOOL", "FRIEND"],
+        "Hard": ["BEAUTIFUL", "ELEPHANT", "COMPUTER", "BUTTERFLY", "ADVENTURE"]
+    }
+    
+    difficulty = st.selectbox("Select Difficulty:", list(practice_words.keys()))
+    
+    st.write("Click a word to practice:")
+    for word in practice_words[difficulty]:
+        if st.button(word, key=f"practice_{word}"):
+            st.session_state.current_word = word
+            st.session_state.detected_text = word
+            st.success(f"✅ Selected: **{word}**")
+    
+    # Statistics section
+    st.markdown("---")
+    st.subheader("📈 Session Statistics")
+    
+    if st.session_state.get('current_word'):
+        st.info(f"**Current Word:** {st.session_state.current_word}")
+    else:
+        st.info("**Current Word:** None selected")
+    
+    st.write(f"**Session ID:** {st.session_state.session_id[:8]}...")
+    st.write(f"**User:** {username}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; padding: 2rem 0; color: rgba(255, 255, 255, 0.7);">
+    <p style="font-size: 1.1rem; font-family: 'Comic Sans MS', 'Comfortaa', cursive;">
+        💙 Made with love for dyslexic learners 💙
+    </p>
+    <p style="font-size: 0.9rem; font-family: 'Comic Sans MS', 'Comfortaa', cursive;">
+        Keep practicing, you're doing amazing! ✨
+    </p>
+</div>
+""", unsafe_allow_html=True)
