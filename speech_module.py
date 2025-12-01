@@ -1,10 +1,10 @@
 import speech_recognition as sr
 import streamlit as st
-import random
 import time
 from gtts import gTTS
 import tempfile
 import os
+import difflib
 
 def play_sound(text, slow=False):
     """Helper function to play audio feedback"""
@@ -24,241 +24,199 @@ def play_sound(text, slow=False):
     except Exception as e:
         pass
 
-def recognize_speech_unified(target_word, mode="advanced", slow_speed=False):
+def phonetic_match(spoken_letter, target_letter):
     """
-    Enhanced speech recognition - User says full word letter by letter,
-    then we recognize and compare all at once.
+    Check if spoken letter matches target letter.
+    STRICT MODE: Only accepts the letter or its specific phonetic name.
     """
-    if not target_word:
-        return None
+    spoken = spoken_letter.upper()
+    target = target_letter.upper()
+    
+    if spoken == target: return True
+    
+    phonetic_groups = {
+        'A': ['AY', 'EY'], 'B': ['BEE', 'BE'], 'C': ['SEE', 'SEA'],
+        'D': ['DEE'], 'E': ['EE'], 'F': ['EFF', 'EF'],
+        'G': ['GEE', 'JE'], 'H': ['AYCH', 'AITCH', 'HA'],
+        'I': ['EYE', 'AYE'], 'J': ['JAY'], 'K': ['KAY', 'CAY'],
+        'L': ['ELL', 'EL'], 'M': ['EM'], 'N': ['EN'],
+        'O': ['OH', 'OWE'], 'P': ['PEE', 'PE'],
+        'Q': ['CUE', 'KYU', 'QUE'], 'R': ['AR', 'ARE'],
+        'S': ['ESS', 'ES'], 'T': ['TEE', 'TE'],
+        'U': ['YOU', 'YUE'], 'V': ['VEE', 'VE'],
+        'W': ['DOUBLE-U', 'DOUBLEU'], 'X': ['EX'],
+        'Y': ['WHY', 'WYE'], 'Z': ['ZEE', 'ZED']
+    }
+    
+    if target in phonetic_groups and spoken in phonetic_groups[target]:
+        return True
+    return False
+
+def extract_letters_from_speech(spoken_text, target_length):
+    """
+    Extracts explicit letters from speech.
+    """
+    letter_names = {
+        'AY': 'A', 'BEE': 'B', 'SEE': 'C', 'DEE': 'D', 'EE': 'E',
+        'EFF': 'F', 'GEE': 'G', 'AYCH': 'H', 'EYE': 'I', 'JAY': 'J',
+        'KAY': 'K', 'ELL': 'L', 'EM': 'M', 'EN': 'N', 'OH': 'O',
+        'PEE': 'P', 'CUE': 'Q', 'AR': 'R', 'ESS': 'S', 'TEE': 'T',
+        'YOU': 'U', 'VEE': 'V', 'DOUBLE': 'W', 'EX': 'X', 'WHY': 'Y',
+        'ZEE': 'Z', 'ZED': 'Z', 'SPACE': ' '
+    }
+    
+    words = spoken_text.upper().split()
+    recognized_letters = []
+    
+    i = 0
+    while i < len(words):
+        word = words[i]
+        
+        # Handle "DOUBLE U"
+        if word == 'DOUBLE' and i + 1 < len(words) and words[i+1] in ['U', 'YOU']:
+            recognized_letters.append('W')
+            i += 2; continue
+            
+        if word in letter_names:
+            recognized_letters.append(letter_names[word])
+        elif len(word) == 1 and word.isalpha():
+            recognized_letters.append(word)
+        elif word == 'SPACE':
+            recognized_letters.append(' ')
+        elif word.isalpha():
+            recognized_letters.append(word[0])
+            
+        i += 1
+    return recognized_letters
+
+def recognize_speech_unified(target_word, mode="spelling", slow_speed=False):
+    """
+    Unified function for both Spelling and Pronunciation.
+    """
+    if not target_word: return None
     
     word_display_placeholder = st.empty()
     status_placeholder = st.empty()
-    
     target_upper = target_word.upper().strip()
     
-    # Initialize recognizer with optimized settings
     recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 2000
-    recognizer.dynamic_energy_threshold = True
-    recognizer.pause_threshold = 1.0
-    recognizer.phrase_threshold = 0.3
-    recognizer.non_speaking_duration = 0.8
     
-    def display_word_state(recognized_letters, comparing=False):
-        """Display word with color-coded letters"""
+    def display_word_state(match_results, is_final=False):
         html_parts = []
-        
-        if comparing and recognized_letters:
-            # Show comparison between target and recognized
+        if is_final:
             for i, letter in enumerate(target_upper):
-                if i < len(recognized_letters):
-                    if recognized_letters[i] == letter:
-                        # Correct - green
-                        html_parts.append(
-                            f'<span style="color:#38ef7d; font-size:70px; font-weight:bold; '
-                            f'text-shadow:2px 2px 6px rgba(0,255,0,0.4); '
-                            f'font-family: Comic Sans MS, Comfortaa, cursive;">{letter}</span>'
-                        )
-                    else:
-                        # Incorrect - show what was said in red
-                        html_parts.append(
-                            f'<span style="color:#ff4b5c; font-size:70px; font-weight:bold; '
-                            f'text-shadow:2px 2px 6px rgba(255,0,0,0.4); '
-                            f'font-family: Comic Sans MS, Comfortaa, cursive;">{recognized_letters[i]}</span>'
-                        )
-                else:
-                    # Missing letter
-                    html_parts.append(
-                        f'<span style="color:#ff4b5c; font-size:70px; font-weight:bold; '
-                        f'text-shadow:2px 2px 6px rgba(255,0,0,0.4); '
-                        f'font-family: Comic Sans MS, Comfortaa, cursive;">_</span>'
-                    )
+                is_correct = False
+                if i < len(match_results) and match_results[i] is True:
+                    is_correct = True
+                
+                color = "#38ef7d" if is_correct else "#ff4b5c"
+                display_char = letter if letter != ' ' else '&nbsp;&nbsp;'
+                html_parts.append(f'<span style="color:{color}; font-size:70px; font-weight:bold; text-shadow:2px 2px 6px rgba(0,0,0,0.2); margin: 0 5px;">{display_char}</span>')
         else:
-            # Show target word waiting for input
             for letter in target_upper:
-                html_parts.append(
-                    f'<span style="color:#2E86AB; font-size:70px; font-weight:bold; '
-                    f'text-shadow:2px 2px 6px rgba(0,0,0,0.3); '
-                    f'font-family: Comic Sans MS, Comfortaa, cursive;">{letter}</span>'
-                )
-        
+                display_char = letter if letter != ' ' else '&nbsp;&nbsp;'
+                html_parts.append(f'<span style="color:#2E86AB; font-size:70px; font-weight:bold; margin: 0 5px;">{display_char}</span>')
+
         word_html = f"""
-        <div style="text-align:center; letter-spacing:15px; margin:30px 0; 
-                    background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
+        <div style="text-align:center; margin:30px 0; background: rgba(255,255,255,0.1); 
                     border-radius:20px; padding:25px; border:2px solid rgba(255,255,255,0.2);">
             {''.join(html_parts)}
-        </div>
-        """
+        </div>"""
         word_display_placeholder.markdown(word_html, unsafe_allow_html=True)
-    
+
     try:
         with sr.Microphone() as source:
-            # Calibration
-            status_placeholder.warning("🎤 **Calibrating microphone...** Please be quiet for 2 seconds...")
-            display_word_state([])
-            recognizer.adjust_for_ambient_noise(source, duration=2)
+            status_placeholder.warning("🤫 Adjusting for background noise...")
+            recognizer.adjust_for_ambient_noise(source, duration=1.0)
             
-            if mode == "advanced":
-                # Advanced mode - listen for full word spelled letter by letter
-                status_placeholder.success(f"🎤 **Ready! Say '{target_word}' letter by letter**")
-                status_placeholder.info(
-                    f"💡 **Example:** For '{target_word}', say: "
-                    f"'{' ... '.join(list(target_upper))}' (with pauses between letters)"
-                )
-                
-                # Show target word
-                display_word_state([])
-                
-                # Play example first
-                play_sound(f"Say {target_word} letter by letter", slow=False)
-                time.sleep(2)
-                
-                # Show ready prompt
-                status_placeholder.info("🎤 **Listening now... Start speaking!**")
-                time.sleep(1)
-                
-                try:
-                    # Listen for the full spelling with longer timeout
-                    # User will say: "C... A... T..." with pauses
-                    audio = recognizer.listen(
-                        source,
-                        timeout=15,  # Long timeout for full word
-                        phrase_time_limit=20  # Allow time for all letters
-                    )
-                    
-                    status_placeholder.info("🔄 **Processing your speech...**")
-                    
-                    # Recognize what was said
-                    spoken_text = recognizer.recognize_google(audio, language='en-US').upper()
-                    
-                    # Display what was heard
-                    status_placeholder.success(f"✅ **Heard:** '{spoken_text}'")
-                    
-                    # Extract only letters from spoken text
-                    spoken_letters = ''.join(c for c in spoken_text if c.isalpha())
-                    
-                    st.info(f"🔤 **Extracted letters:** {' '.join(list(spoken_letters))}")
-                    
-                    # Compare with target word letter by letter
-                    recognized_letters = list(spoken_letters)
-                    
-                    # Pad with underscores if too short
-                    while len(recognized_letters) < len(target_upper):
-                        recognized_letters.append('_')
-                    
-                    # Trim if too long
-                    recognized_letters = recognized_letters[:len(target_upper)]
-                    
-                    # Display comparison with animation
-                    for i in range(len(target_upper) + 1):
-                        display_word_state(recognized_letters[:i], comparing=True)
-                        time.sleep(0.4)
-                    
-                    display_word_state(recognized_letters, comparing=True)
-                    
-                except sr.UnknownValueError:
-                    status_placeholder.error("❌ Could not understand. Please speak clearly and try again.")
-                    return None
-                    
-                except sr.WaitTimeoutError:
-                    status_placeholder.error("⏱️ No speech detected. Please try again and start speaking sooner.")
-                    return None
-                    
-                except sr.RequestError as e:
-                    status_placeholder.error(f"❌ Speech service error: {str(e)}")
-                    st.error("💡 **Check your internet connection**")
-                    return None
-                
+            display_word_state([], is_final=False)
+            
+            if mode == "spelling":
+                status_placeholder.info(f"🎤 **SPELLING**: Say '{' ... '.join(list(target_upper))}'")
+                play_sound("Spell the word letter by letter", slow=False)
             else:
-                # Basic mode - recognize full word at once (not letter by letter)
-                status_placeholder.success(f"🎤 **Say the word: '{target_word}' (as a complete word)**")
-                display_word_state([])
+                status_placeholder.info(f"🎤 **SPEAKING**: Say '{target_word}'")
+                play_sound(f"Say the word {target_word}", slow=slow_speed)
+            
+            time.sleep(0.5)
+            status_placeholder.success("🎤 **LISTENING... GO!**")
+            
+            try:
+                audio = recognizer.listen(source, timeout=8, phrase_time_limit=15 if mode == "spelling" else 5)
+                status_placeholder.info("🔄 **Processing...**")
                 
-                # Play the word first
-                play_sound(target_word, slow=slow_speed)
-                time.sleep(2)
-                
-                status_placeholder.info("🎤 **Listening now... Say the word!**")
-                
+                spoken_text = ""
                 try:
-                    audio = recognizer.listen(
-                        source,
-                        timeout=10,
-                        phrase_time_limit=6
-                    )
-                    
                     spoken_text = recognizer.recognize_google(audio, language='en-US').upper()
-                    spoken_clean = ''.join(c for c in spoken_text if c.isalnum())
+                    st.toast(f"Heard: {spoken_text}")
+                except sr.UnknownValueError:
+                    spoken_text = "" 
+                
+                feedback = {}
+                match_results = [False] * len(target_upper)
+                
+                if mode == "spelling":
+                    spoken_letters = extract_letters_from_speech(spoken_text, len(target_upper))
+                    spoken_idx = 0
                     
-                    status_placeholder.success(f"✅ **Heard:** '{spoken_text}'")
-                    
-                    # Compare letter by letter
-                    recognized_letters = []
-                    for i, target_letter in enumerate(target_upper):
-                        if i < len(spoken_clean) and spoken_clean[i] == target_letter:
-                            recognized_letters.append(target_letter)
-                        elif target_letter in spoken_clean:
-                            recognized_letters.append(target_letter)
+                    # --- FIXED LOGIC FOR SPACES ---
+                    for i, target_char in enumerate(target_upper):
+                        if target_char == ' ':
+                            # If user explicitly said "Space", consume it
+                            if spoken_idx < len(spoken_letters) and spoken_letters[spoken_idx] == ' ':
+                                match_results[i] = True
+                                spoken_idx += 1
+                            else:
+                                # User didn't say space? Auto-mark Correct! (Don't break flow)
+                                match_results[i] = True
                         else:
-                            recognized_letters.append('_')
+                            # Normal Letter Matching
+                            if spoken_idx < len(spoken_letters):
+                                if spoken_letters[spoken_idx] == ' ': # Skip accidental extra space in speech
+                                    spoken_idx += 1
+                                    
+                                if spoken_idx < len(spoken_letters):
+                                    sl = spoken_letters[spoken_idx]
+                                    if sl == target_char or phonetic_match(sl, target_char):
+                                        match_results[i] = True
+                                    spoken_idx += 1
+                        
+                        feedback[target_char] = "correct" if match_results[i] else "incorrect"
+
+                else: 
+                    # Pronunciation Mode
+                    spoken_clean = ''.join(c for c in spoken_text if c.isalnum())
+                    matcher = difflib.SequenceMatcher(None, target_upper, spoken_clean)
+                    for match_id, (i, j, n) in enumerate(matcher.get_matching_blocks()):
+                        for k in range(n):
+                            if i + k < len(match_results):
+                                match_results[i + k] = True
+
+                    for i, letter in enumerate(target_upper):
+                        feedback[letter] = "correct" if match_results[i] else "incorrect"
                     
-                    # Show comparison with animation
-                    for i in range(len(target_upper) + 1):
-                        display_word_state(recognized_letters[:i], comparing=True)
-                        time.sleep(0.3)
-                    
-                    display_word_state(recognized_letters, comparing=True)
+                    if not spoken_clean: st.warning("⚠️ Didn't catch that.")
+                    elif not all(match_results): st.warning(f"👂 You said: **{spoken_text}**")
+
+                display_word_state(match_results, is_final=True)
                 
-                except sr.UnknownValueError:
-                    status_placeholder.error("❌ Could not understand. Please try again.")
-                    return None
-                except sr.WaitTimeoutError:
-                    status_placeholder.error("⏱️ Timeout. Please try again.")
-                    return None
-                except sr.RequestError as e:
-                    status_placeholder.error(f"❌ Speech service error: {str(e)}")
-                    return None
-            
-            # Build feedback dictionary
-            feedback = {}
-            for i, letter in enumerate(target_upper):
-                if i < len(recognized_letters):
-                    feedback[letter] = "correct" if recognized_letters[i] == letter else "incorrect"
+                correct_count = sum(match_results)
+                if correct_count == len(target_upper) and len(target_upper) > 0:
+                    status_placeholder.success("🌟 Perfect Match!")
+                elif correct_count > 0:
+                    status_placeholder.warning(f"👍 Partial Match! ({correct_count}/{len(target_upper)})")
                 else:
-                    feedback[letter] = "incorrect"
-            
-            # Calculate and display accuracy
-            correct_count = sum(1 for status in feedback.values() if status == "correct")
-            accuracy = (correct_count / len(target_upper)) * 100
-            
-            if accuracy == 100:
-                status_placeholder.success("🌟 **Perfect! 100% Correct!**")
-                play_sound("Perfect! All letters correct!", slow=False)
-            elif accuracy >= 70:
-                status_placeholder.success(f"✅ **Great job! {accuracy:.0f}% Correct**")
-                play_sound("Good job!", slow=False)
-            else:
-                status_placeholder.info(f"💪 **Keep trying! {accuracy:.0f}% Correct**")
-                play_sound("Keep practicing!", slow=False)
-            
-            return feedback
-            
-    except OSError as e:
-        status_placeholder.error(f"❌ Microphone error: {str(e)}")
-        st.error("💡 **Troubleshooting:**")
-        st.write("- Check microphone is connected and working")
-        st.write("- Grant microphone permissions to your browser")
-        st.write("- Close other apps using the microphone")
-        st.write("- Try refreshing the page")
-        return None
-        
+                    status_placeholder.error("❌ Not quite. Try again!")
+                
+                return feedback
+
+            except sr.WaitTimeoutError:
+                status_placeholder.error("⏱️ Timeout. Please speak louder.")
+                return None
+            except sr.RequestError:
+                status_placeholder.error("❌ Internet/API Error.")
+                return None
+                
     except Exception as e:
-        status_placeholder.error(f"❌ Unexpected error: {str(e)}")
-        st.error("💡 **Try:** Refreshing the page or checking your microphone settings.")
+        st.error(f"Error: {e}")
         return None
-
-
-# Backward compatibility
-recognize_speech = recognize_speech_unified
-recognize_speech_with_highlighting = recognize_speech_unified

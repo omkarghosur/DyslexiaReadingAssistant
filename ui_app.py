@@ -13,6 +13,7 @@ from gtts import gTTS
 import tempfile
 from playsound import playsound
 import speech_recognition as sr
+import difflib
 
 # Import our custom modules
 from tts_module import DyslexiaTTS
@@ -36,54 +37,57 @@ else:
 # 🎨 SYNCHRONIZED LETTER HIGHLIGHTING + TTS
 # ========================================
 def spell_word_with_highlighting(word, slow_letters=True, slow_word=False):
-    """Spell word letter-by-letter with synchronized visual highlighting and audio."""
+    """
+    Spell word letter-by-letter with synchronized visual highlighting and audio.
+    Updated: Inactive letters remain simple white/normal. Active letter becomes Bold/Red.
+    Spaces are now SILENT (no audio "space").
+    """
     placeholder = st.empty()
-    colors = ["#ff4b5c", "#f9ed69", "#6a2c70", "#1fab89", "#00bcd4", "#ff9800", "#cddc39"]
-    
     word_upper = word.upper()
     
     # Step 1: Spell each letter with synchronized audio + visual
     for i, letter in enumerate(word_upper):
-        # Choose random color for this letter
-        color = random.choice(colors)
         
-        # Build HTML showing all letters, with current one highlighted
         html_parts = []
         for j, char in enumerate(word_upper):
             if j == i:
-                # Current letter - highlighted in color
+                # ACTIVE LETTER: Bold, Red, Slightly Larger
                 html_parts.append(
-                    f"<span style='color:{color}; font-size:80px; font-weight:bold; "
-                    f"text-shadow:3px 3px 8px rgba(0,0,0,0.4); font-family: \"Comic Sans MS\", \"Comfortaa\", cursive;'>{char}</span>"
+                    f"<span style='color:#FF4B4B; font-size:80px; font-weight:bold; "
+                    f"text-shadow:2px 2px 4px rgba(0,0,0,0.3); font-family: \"Comic Sans MS\", \"Comfortaa\", cursive;'>{char}</span>"
                 )
             else:
-                # Other letters - dimmed
+                # INACTIVE LETTER: White, Normal weight (Not Bold), Stable
                 html_parts.append(
-                    f"<span style='color:#cccccc; font-size:64px; font-weight:bold; font-family: \"Comic Sans MS\", \"Comfortaa\", cursive;'>{char}</span>"
+                    f"<span style='color:#FFFFFF; font-size:60px; font-weight:normal; "
+                    f"font-family: \"Comic Sans MS\", \"Comfortaa\", cursive;'>{char}</span>"
                 )
         
-        # Display the word with current letter highlighted
+        # Display the word
         full_html = f"""
-        <div style='text-align:center; letter-spacing:12px; margin:30px 0;'>
+        <div style='text-align:center; letter-spacing:15px; margin:30px 0;'>
             {''.join(html_parts)}
         </div>
         """
         placeholder.markdown(full_html, unsafe_allow_html=True)
         
-        # Play audio for this letter (synchronized!)
+        # Play audio (SILENT FOR SPACES)
         try:
-            letter_tts = gTTS(text=letter, lang='en', slow=slow_letters)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
-                letter_tts.save(f.name)
-                playsound(f.name)
-                os.remove(f.name)
+            if letter == ' ':
+                # Do not play audio, just pause
+                time.sleep(0.3)
+            else:
+                letter_tts = gTTS(text=letter, lang='en', slow=slow_letters)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                    letter_tts.save(f.name)
+                    playsound(f.name)
+                    os.remove(f.name)
         except Exception as e:
-            st.error(f"Audio error for letter {letter}: {e}")
+            st.error(f"Audio error: {e}")
         
-        # Small pause between letters
         time.sleep(0.2)
     
-    # Step 2: Show full word and speak it
+    # Step 2: Show full word (Standard Blue) and speak it
     time.sleep(0.3)
     
     final_html = f"""
@@ -100,7 +104,6 @@ def spell_word_with_highlighting(word, slow_letters=True, slow_word=False):
     """
     placeholder.markdown(final_html, unsafe_allow_html=True)
     
-    # Speak full word
     try:
         word_tts = gTTS(text=word, lang='en', slow=slow_word)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
@@ -108,624 +111,267 @@ def spell_word_with_highlighting(word, slow_letters=True, slow_word=False):
             playsound(f.name)
             os.remove(f.name)
     except Exception as e:
-        st.error(f"Audio error for full word: {e}")
-
-# ========================================
-# 🎤 BACKWARD COMPATIBILITY ALIASES
-# ========================================
-# Use the imported function from speech_module
-recognize_speech = recognize_speech_unified
-recognize_speech_with_highlighting = recognize_speech_unified
+        st.error(f"Audio error: {e}")
 
 # ========================================
 # OBJECT DETECTION FUNCTIONS
 # ========================================
-
-def get_text_from_image_gemini(frame):
-    """Extracts text from image using Gemini API."""
-    if not api_key:
-        return None
-    _, buffer = cv2.imencode('.jpg', frame)
-    encoded_image = base64.b64encode(buffer).decode('utf-8')
-    
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": "Extract the text from this image. Be precise and only return the text."},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": encoded_image}}
-                ]
-            }
-        ]
-    }
-    
-    headers = {'Content-Type': 'application/json'}
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+def get_object_detection_gemini(frame):
+    """Detects objects in image using Gemini API."""
+    if not api_key: return None
     
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
-        result = response.json()
-        candidates = result.get('candidates', [])
-        if candidates and 'content' in candidates[0]:
-            parts = candidates[0]['content'].get('parts', [])
-            text = parts[0].get('text', '') if parts else ''
-            return text.strip()
-        return None
-    except requests.exceptions.RequestException as e:
-        st.error(f"Gemini API Error: {e}")
-        return None
-    except (KeyError, IndexError) as e:
-        st.error(f"Gemini Response Parsing Error: {e}")
-        return None
-
-def get_object_detection_gemini(frame):
-    """Detects objects in image using Gemini API with retry logic."""
-    if not api_key:
-        return None
-    
-    max_retries = 3
-    retry_delay = 1
-    
-    for attempt in range(max_retries):
-        try:
-            # Resize frame for better processing
-            height, width = frame.shape[:2]
-            if width > 800:
-                scale = 800 / width
-                new_width = 800
-                new_height = int(height * scale)
-                frame = cv2.resize(frame, (new_width, new_height))
-            
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            encoded_image = base64.b64encode(buffer).decode('utf-8')
-            
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": "Look at this image carefully. Identify the main object that a person is showing or holding. Ignore human body parts, background items, and multiple objects. Return only the single most prominent object name in English, like 'Apple', 'Book', 'Pen', 'Phone', etc. Be specific and concise."},
-                            {"inline_data": {"mime_type": "image/jpeg", "data": encoded_image}}
-                        ]
-                    }
+        # Resize if huge
+        height, width = frame.shape[:2]
+        if width > 800:
+            scale = 800 / width
+            frame = cv2.resize(frame, (800, int(height * scale)))
+        
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        encoded_image = base64.b64encode(buffer).decode('utf-8')
+        
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": "Look at this image carefully. Identify the main object that a person is showing or holding. Return only the single most prominent object name in English (e.g. 'Apple', 'Book'). Be specific and concise."},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": encoded_image}}
                 ]
-            }
-            
-            headers = {
-                'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-            
-            session = requests.Session()
-            session.verify = True
-            
-            response = session.post(api_url, headers=headers, json=payload, timeout=20)
-            response.raise_for_status()
-            result = response.json()
-            
-            candidates = result.get('candidates', [])
+            }]
+        }
+        
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        headers = {'Content-Type': 'application/json'}
+        
+        response = requests.post(api_url, headers=headers, json=payload, timeout=20)
+        if response.status_code == 200:
+            candidates = response.json().get('candidates', [])
             if candidates and 'content' in candidates[0]:
-                parts = candidates[0]['content'].get('parts', [])
-                text = parts[0].get('text', '') if parts else ''
+                text = candidates[0]['content']['parts'][0]['text']
+                
+                # Cleanup text
                 detected_text = text.strip()
-                
-                prefixes_to_remove = ["The object is", "I can see", "This is", "The main object is", "Object:"]
-                for prefix in prefixes_to_remove:
-                    if detected_text.lower().startswith(prefix.lower()):
-                        detected_text = detected_text[len(prefix):].strip()
-                
-                detected_text = detected_text.split('.')[0].split(',')[0].strip()
-                
-                return detected_text if detected_text else None
+                prefixes = ["The object is", "I can see", "This is", "Object:"]
+                for p in prefixes:
+                    if detected_text.lower().startswith(p.lower()):
+                        detected_text = detected_text[len(p):].strip()
+                return detected_text.split('.')[0].strip()
             
-            return None
-            
-        except requests.exceptions.SSLError as e:
-            st.warning(f"🔄 SSL Error (attempt {attempt + 1}/{max_retries}): {str(e)[:100]}...")
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                retry_delay *= 2
-                continue
-            else:
-                st.error("❌ SSL connection failed after multiple attempts.")
-                return None
-                
-        except requests.exceptions.RequestException as e:
-            st.warning(f"🔄 Request Error (attempt {attempt + 1}/{max_retries}): {str(e)[:100]}...")
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                retry_delay *= 2
-                continue
-            else:
-                st.error(f"❌ API request failed: {e}")
-                return None
-                
-        except (KeyError, IndexError) as e:
-            st.error(f"❌ Gemini Response Parsing Error: {e}")
-            return None
-            
-        except Exception as e:
-            st.error(f"❌ Unexpected error: {e}")
-            return None
-    
+    except Exception as e:
+        st.error(f"Detection Error: {e}")
     return None
 
 def get_pronunciation_feedback(word):
     """Gets letter-by-letter pronunciation feedback from Gemini."""
-    if not word:
-        return "No text to analyze."
-    if not api_key:
-        return "Gemini feedback disabled (no API key)."
+    if not word or not api_key: return "Feedback unavailable."
     
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": (
-                            f"A dyslexic student is learning to pronounce the word '{word}'. "
-                            "Break the word into letters and explain how each letter sounds "
-                            "in **simple English**, not phonetic symbols. "
-                            "Example: For 'cat' → C says 'kuh', A says 'aah', T says 'tuh'. "
-                            "Be short, friendly, and encouraging. "
-                            "End with a full-word pronunciation like: 'Now say it together: cat!'."
-                        )
-                    }
-                ]
-            }
-        ]
-    }
-
-    headers = {'Content-Type': 'application/json'}
-    api_url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash:generateContent?key={api_key}"
-    )
-
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=25)
-        response.raise_for_status()
-        result = response.json()
-
-        candidates = result.get('candidates', [])
-        if candidates and 'content' in candidates[0]:
-            parts = candidates[0]['content'].get('parts', [])
-            text = parts[0].get('text', '').strip() if parts else ''
-            return text or "No feedback received."
-        return "No feedback received."
-
-    except requests.exceptions.Timeout:
-        return "⚠️ Gemini took too long to respond. Please try again."
-    except requests.exceptions.RequestException as e:
-        return f"Feedback Error: {e}"
-    except (KeyError, IndexError) as e:
-        return f"Feedback Parsing Error: {e}"
-
+        payload = {
+            "contents": [{
+                "parts": [{"text": f"Explain how to pronounce '{word}' letter by letter for a dyslexic student. Simple English. No complex phonetics."}]
+            }]
+        }
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        response = requests.post(api_url, headers={'Content-Type': 'application/json'}, json=payload)
+        return response.json()['candidates'][0]['content']['parts'][0]['text']
+    except:
+        return "Could not get feedback."
 
 # ========================================
 # STREAMLIT UI
 # ========================================
 
-st.set_page_config(
-    page_title="AI Reading Assistant",
-    page_icon="📚",
-    layout="wide"
-)
+st.set_page_config(page_title="AI Reading Assistant", page_icon="📚", layout="wide")
 
-# Add custom CSS with consistent Comic Sans MS font
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@300;400;700&display=swap');
-
-/* Global font family */
-* {
-    font-family: "Comic Sans MS", "Comfortaa", cursive !important;
-}
-
-/* Simplified animated background */
-@keyframes gradient { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
-#root { background: linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #4facfe); background-size: 400% 400%; animation: gradient 15s ease infinite; min-height: 100vh; }
-
-/* Glassmorphism card */
-.main-container, .glass-card { background: rgba(255,255,255,0.15); backdrop-filter: blur(16px); border-radius: 16px; border: 1px solid rgba(255,255,255,0.2); padding: 1.5rem; }
-
-/* Buttons */
-.stButton>button { background: linear-gradient(135deg,#667eea,#764ba2); border:none; border-radius:12px; color:#fff !important; font-weight:600; padding:0.5rem 1.25rem; box-shadow:0 4px 15px rgba(116,79,168,0.45); font-family: "Comic Sans MS", "Comfortaa", cursive !important; }
-.stButton>button:hover { transform: translateY(-2px); background: linear-gradient(135deg,#764ba2,#f093fb); }
-
-/* Typography */
-h1,h2,h3,h4,h5,h6 { font-family: "Comic Sans MS", "Comfortaa", cursive !important; background: linear-gradient(135deg,#667eea 0%, #f093fb 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; letter-spacing:2px; }
-
-/* Letter feedback */
-.letter-correct {
-    background: linear-gradient(135deg,#38ef7d 0%,#11998e 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-weight: 900;
-    font-size: 48px;
-}
-
-.letter-incorrect {
-    background: linear-gradient(135deg,#ff4b5c 0%,#f9ed69 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-weight: 900;
-    font-size: 48px;
-}
-
-/* Inputs */
-.stTextInput>div>div>input { background: rgba(255,255,255,0.2); backdrop-filter: blur(8px); border:1px solid rgba(255,255,255,0.3); border-radius:10px; color:#fff; font-family: "Comic Sans MS", "Comfortaa", cursive !important; }
-
-/* Scrollbar */
-::-webkit-scrollbar { width:10px; }
-::-webkit-scrollbar-thumb { background: linear-gradient(135deg,#667eea 0%,#764ba2 100%); border-radius:10px; }
+* { font-family: "Comic Sans MS", "Comfortaa", cursive !important; }
+.stButton>button { background: linear-gradient(135deg,#667eea,#764ba2); color:#fff !important; border-radius:12px; font-weight:bold; }
+h1,h2 { background: linear-gradient(135deg,#667eea 0%, #f093fb 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'user_id' not in st.session_state:
-    st.session_state.user_id = "user_" + str(int(time.time()))
-if 'session_id' not in st.session_state:
-    st.session_state.session_id = "session_" + str(int(time.time()))
-if 'detected_text' not in st.session_state:
-    st.session_state.detected_text = ""
-if 'current_word' not in st.session_state:
-    st.session_state.current_word = ""
+# Session State Init
+if 'session_id' not in st.session_state: st.session_state.session_id = str(int(time.time()))
+if 'current_word' not in st.session_state: st.session_state.current_word = ""
 
-# Initialize TTS engine
-if 'tts_engine' not in st.session_state:
-    st.session_state.tts_engine = None
-
-# Header with gradient animated title
-st.markdown("""
-<div style="text-align: center; padding: 2rem 0;">
-    <h1 class="gradient-text" style="font-size: 3.5rem; font-weight: bold; margin: 0;">
-        📚 AI-Powered Reading Assistant
-    </h1>
-    <p style="font-size: 1.5rem; color: rgba(255, 255, 255, 0.9); margin-top: 1rem;">
-        Empowering Dyslexic Students with Technology ✨
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
+# Header
+st.markdown("<h1 style='text-align: center;'>📚 AI-Powered Reading Assistant</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
-# Sidebar for user info and settings
+# Sidebar
 with st.sidebar:
-    st.header("👤 User Settings")
-    username = st.text_input("Enter your name:", value="Student")
-    
-    st.header("🔧 TTS Settings")
-    slow_letters = st.checkbox("Slow letter pronunciation", value=True)
-    slow_word = st.checkbox("Slow word pronunciation", value=False)
-    
-    st.header("📊 Progress")
-    st.info("Keep practicing to improve your reading skills!")
+    st.header("👤 Settings")
+    username = st.text_input("Name:", value="Student")
+    slow_letters = st.checkbox("Slow Letters", value=True)
+    slow_word = st.checkbox("Slow Word", value=False)
 
-# Main content area
-col1, col2 = st.columns([2, 1])
+# ==========================================
+# 🟢 COLUMNS
+# ==========================================
+col1, col2 = st.columns([1.5, 1])
 
+# --- COLUMN 1: CAMERA ---
 with col1:
     st.header("📷 Camera Interface")
     
-    # Camera controls
-    if st.button("🎥 Start Camera", key="start_camera"):
-        st.session_state.camera_active = True
-    
-    if st.button("⏹️ Stop Camera", key="stop_camera"):
-        st.session_state.camera_active = False
-    
-    # Camera display
-    if st.session_state.get('camera_active', False):
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            st.error("❌ Could not open webcam")
-        else:
-            st.write("✅ Camera is active")
-            
-            camera_placeholder = st.empty()
-            
-            st.write("📺 **Live Camera Feed:**")
-            ret, frame = cap.read()
-            if ret:
-                camera_placeholder.image(frame, channels="BGR", caption="Live Camera Feed")
-            
-            col_cam1, col_cam2, col_cam3 = st.columns(3)
-            
-            with col_cam1:
-                if st.button("📸 Capture Frame", key="capture_frame"):
-                    ret, frame = cap.read()
-                    if ret:
-                        st.session_state.last_frame = frame
-                        st.success("📸 Frame captured!")
-                    else:
-                        st.error("❌ Failed to capture frame")
-            
-            with col_cam2:
-                if st.button("🔄 Recapture Frame", key="recapture_frame"):
-                    ret, frame = cap.read()
-                    if ret:
-                        st.session_state.last_frame = frame
-                        st.success("🔄 Frame recaptured!")
-                    else:
-                        st.error("❌ Failed to recapture frame")
-            
-            with col_cam3:
-                if st.button("🔍 Detect Objects", key="detect_objects"):
-                    if 'last_frame' in st.session_state:
-                        st.write("🔄 Processing captured image...")
-                        with st.spinner("Analyzing image with Gemini AI..."):
-                            detected = get_object_detection_gemini(st.session_state.last_frame)
-                        if detected and detected.strip():
-                            st.session_state.detected_text = detected.strip()
-                            st.session_state.current_word = detected.strip()
-                            st.success(f"🎯 Detected: **{detected.strip()}**")
-                        else:
-                            st.error("⚠️ No objects detected. Try capturing a clearer frame.")
-                            st.info("💡 **Troubleshooting tips:**")
-                            st.write("- Make sure your internet connection is stable")
-                            st.write("- Try holding the object closer to the camera")
-                            st.write("- Ensure good lighting")
-                            st.write("- Try a different object")
-                    else:
-                        st.error("❌ Please capture a frame first!")
-            
-            # Show captured frame if available
-            if 'last_frame' in st.session_state:
-                st.image(st.session_state.last_frame, channels="BGR", caption="Captured Frame")
-                
-                # Display detected object name in large dyslexic font
-                if st.session_state.get('current_word'):
-                    st.markdown("---")
-                    st.markdown(f"""
-                    <div style="text-align: center; margin: 20px 0;">
-                        <h1 style="font-family: 'Comic Sans MS', 'Comfortaa', cursive; 
-                                   font-size: 48px; 
-                                   font-weight: bold; 
-                                   color: #2E86AB; 
-                                   text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-                                   letter-spacing: 3px;">
-                            {st.session_state.current_word.upper()}
-                        </h1>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Audio Features Section
-                    st.markdown("---")
-                    st.header("🎵 Audio Features")
-                    
-                    # TTS Controls
-                    st.subheader("🔊 Text-to-Speech")
-                    st.write(f"Current word: **{st.session_state.current_word}**")
-                    
-                    col_tts1, col_tts2 = st.columns(2)
-                    
-                    with col_tts1:
-                        if st.button("🔤 Spell and Read Word", key="spell_word"):
-                            if st.session_state.current_word:
-                                try:
-                                    spell_word_with_highlighting(
-                                        st.session_state.current_word,
-                                        slow_letters=slow_letters,
-                                        slow_word=slow_word
-                                    )
-                                    st.success("🔤 Word spelled and read!")
-                                except Exception as e:
-                                    st.error(f"❌ TTS Error: {e}")
-                            else:
-                                st.error("❌ No word to spell.")
-                    
-                    with col_tts2:
-                        if st.button("🔢 Read Word Only", key="read_word_only"):
-                            if st.session_state.current_word:
-                                with st.spinner("🔊 Speaking..."):
-                                    try:
-                                        tts = gTTS(
-                                            text=st.session_state.current_word,
-                                            lang='en',
-                                            slow=slow_word
-                                        )
-                                        
-                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
-                                            tts.save(f.name)
-                                            playsound(f.name)
-                                            os.remove(f.name)
-                                        
-                                        st.success("🔢 Word read!")
-                                    except Exception as e:
-                                        st.error(f"❌ TTS Error: {e}")
-                            else:
-                                st.error("❌ No word to read.")
-                    
-                    # Pronunciation feedback
-                    if st.button("💡 Get Pronunciation Help", key="pronunciation_help"):
-                        with st.spinner("Getting pronunciation help..."):
-                            feedback = get_pronunciation_feedback(st.session_state.current_word)
-                        
-                        st.subheader("💡 Pronunciation Help")
-                        st.markdown(feedback)
-                    
-                    # ========================================
-                    # 🎤 SPEECH RECOGNITION SECTION
-                    # ========================================
-                    st.markdown("---")
-                    st.header("🎤 Speech Recognition Practice")
-                    
-                    st.write(f"Practice pronouncing: **{st.session_state.current_word}**")
-                    
-                    # Pre-populate word in text field
-                    st.markdown(f"""
-                    <div style='text-align:center; margin:20px 0; padding:20px;
-                                background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
-                                border-radius:15px; border:2px solid rgba(255,255,255,0.2);'>
-                        <p style='font-size:20px; color:#fff; margin-bottom:10px; font-family: "Comic Sans MS", "Comfortaa", cursive;'>
-                            🎯 Word to practice:
-                        </p>
-                        <p style='font-size:48px; font-weight:bold; color:#2E86AB; letter-spacing:8px;
-                                  text-shadow:2px 2px 6px rgba(0,0,0,0.3); font-family: "Comic Sans MS", "Comfortaa", cursive;'>
-                            {st.session_state.current_word.upper()}
-                        </p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Instructions
-                    st.info("🎯 **How it works:** Click the button below, then speak the word letter by letter. Watch as each letter lights up when you say it correctly!")
-                    
-                    # Speech recognition button with advanced highlighting
-                    if st.button("🎤 Start Advanced Speech Recognition", key="start_advanced_speech_recognition"):
-                        st.markdown("---")
-                        feedback = recognize_speech_unified(st.session_state.current_word, mode="advanced", slow_speed=slow_word)
-                            
-                        if feedback:
-                            st.success("✅ Speech recognition completed!")
-                            
-                            # Display final feedback summary
-                            st.markdown("---")
-                            st.subheader("📊 Final Results:")
-                            
-                            # Create a formatted display of the word with correct letters highlighted
-                            word_display = ""
-                            for letter, status in feedback.items():
-                                if status == "correct":
-                                    word_display += f"<span class='letter-correct'>{letter}</span>"
-                                else:
-                                    word_display += f"<span class='letter-incorrect'>{letter}</span>"
-                                word_display += " "
-                            
-                            st.markdown(f"""
-                            <div style="text-align: center; margin: 20px 0;">
-                                <h3 style="font-family: 'Comic Sans MS', 'Comfortaa', cursive;">
-                                    Your pronunciation: {word_display}
-                                </h3>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            # Individual letter feedback in columns
-                            feedback_cols = st.columns(len(feedback))
-                            for i, (letter, status) in enumerate(feedback.items()):
-                                with feedback_cols[i]:
-                                    if status == "correct":
-                                        st.success(f"✅ {letter}")
-                                    else:
-                                        st.error(f"❌ {letter}")
-                            
-                            # Calculate accuracy
-                            correct_count = sum(1 for status in feedback.values() if status == "correct")
-                            accuracy = (correct_count / len(feedback)) * 100
-                            
-                            st.metric("Accuracy", f"{accuracy:.1f}%")
-                            
-                            # Provide encouragement
-                            if accuracy >= 80:
-                                st.success("🌟 Excellent work! You're doing great!")
-                            elif accuracy >= 60:
-                                st.info("👍 Good job! Keep practicing!")
-                            else:
-                                st.info("💪 Keep trying! Practice makes perfect!")
-                        else:
-                            st.error("❌ Speech recognition failed. Please try again.")
-                    
-                    # Alternative: Basic speech recognition (fallback)
-                    st.markdown("---")
-                    st.subheader("🎙️ Basic Speech Recognition (Fallback)")
-                    if st.button("🎙️ Use Basic Recognition", key="basic_speech_recognition"):
-                        with st.spinner("🎤 Listening... Please speak now!"):
-                            feedback = recognize_speech_unified(st.session_state.current_word, mode="basic", slow_speed=slow_word)
-                            
-                        if feedback:
-                            st.success("✅ Speech recognition completed!")
-                            
-                            # Display letter-by-letter feedback
-                            st.subheader("📊 Letter-by-Letter Feedback:")
-                            
-                            word_display = ""
-                            for letter, status in feedback.items():
-                                if status == "correct":
-                                    word_display += f"<span class='letter-correct'>{letter}</span>"
-                                else:
-                                    word_display += f"<span class='letter-incorrect'>{letter}</span>"
-                                word_display += " "
-                            
-                            st.markdown(f"""
-                            <div style="text-align: center; margin: 20px 0;">
-                                <h3 style="font-family: 'Comic Sans MS', 'Comfortaa', cursive;">
-                                    Your pronunciation: {word_display}
-                                </h3>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            feedback_cols = st.columns(len(feedback))
-                            for i, (letter, status) in enumerate(feedback.items()):
-                                with feedback_cols[i]:
-                                    if status == "correct":
-                                        st.success(f"✅ {letter}")
-                                    else:
-                                        st.error(f"❌ {letter}")
-                            
-                            correct_count = sum(1 for status in feedback.values() if status == "correct")
-                            accuracy = (correct_count / len(feedback)) * 100
-                            
-                            st.metric("Accuracy", f"{accuracy:.1f}%")
-                            
-                            if accuracy >= 80:
-                                st.success("🌟 Excellent work! You're doing great!")
-                            elif accuracy >= 60:
-                                st.info("👍 Good job! Keep practicing!")
-                            else:
-                                st.info("💪 Keep trying! Practice makes perfect!")
-                        else:
-                            st.error("❌ Speech recognition failed. Please try again.")
-            
-            # Release camera
-            cap.release()
+    img_file_buffer = st.camera_input("📸 Take a Photo")
 
+    if img_file_buffer is not None:
+        bytes_data = img_file_buffer.getvalue()
+        cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+        st.session_state.last_frame = cv2_img
+        
+        if st.button("🔍 Detect Objects", key="detect_objects"):
+            st.write("🔄 Processing...")
+            with st.spinner("Analyzing image with Gemini AI..."):
+                detected = get_object_detection_gemini(st.session_state.last_frame)
+            
+            if detected:
+                st.session_state.current_word = detected
+                st.session_state.detected_text = detected
+                st.success(f"🎯 Detected: **{detected}**")
+                st.rerun() 
+            else:
+                st.error("⚠️ No objects detected.")
+
+# --- COLUMN 2: MANUAL INPUT ---
 with col2:
     st.header("📝 Manual Input")
     
-    # Manual word input section
-    st.subheader("Type a Word to Practice")
-    manual_word = st.text_input("Enter a word:", value="", key="manual_word_input")
-    
-    if st.button("🎯 Practice This Word", key="practice_manual_word"):
-        if manual_word and manual_word.strip():
+    manual_word = st.text_input("Type a word:", key="manual_input_box")
+    if st.button("🎯 Practice Typed Word"):
+        if manual_word.strip():
             st.session_state.current_word = manual_word.strip()
-            st.session_state.detected_text = manual_word.strip()
-            st.success(f"✅ Now practicing: **{manual_word.strip()}**")
-        else:
-            st.error("❌ Please enter a valid word!")
+            st.rerun()
     
-    # Quick practice words
     st.markdown("---")
-    st.subheader("🎓 Quick Practice Words")
-    
-    practice_words = {
-        "Easy": ["CAT", "DOG", "SUN", "TREE", "BOOK"],
-        "Medium": ["PHONE", "WATER", "HAPPY", "SCHOOL", "FRIEND"],
-        "Hard": ["BEAUTIFUL", "ELEPHANT", "COMPUTER", "BUTTERFLY", "ADVENTURE"]
-    }
-    
-    difficulty = st.selectbox("Select Difficulty:", list(practice_words.keys()))
-    
-    st.write("Click a word to practice:")
-    for word in practice_words[difficulty]:
-        if st.button(word, key=f"practice_{word}"):
+    st.subheader("Or choose one:")
+    quick_words = ["CAT", "DOG", "PHONE", "WATER", "COMPUTER"]
+    for word in quick_words:
+        if st.button(word):
             st.session_state.current_word = word
-            st.session_state.detected_text = word
-            st.success(f"✅ Selected: **{word}**")
+            st.rerun()
     
-    # Statistics section
     st.markdown("---")
-    st.subheader("📈 Session Statistics")
-    
-    if st.session_state.get('current_word'):
+    if st.session_state.current_word:
         st.info(f"**Current Word:** {st.session_state.current_word}")
-    else:
-        st.info("**Current Word:** None selected")
+
+# ==========================================
+# 🟢 RESULTS & PRACTICE SECTION (FULL WIDTH)
+# ==========================================
+if st.session_state.get('current_word'):
+    st.markdown("---")
+    st.markdown(f"""
+    <div style="text-align: center; margin: 20px 0;">
+        <h1 style="font-family: 'Comic Sans MS', 'Comfortaa', cursive; 
+                   font-size: 48px; 
+                   font-weight: bold; 
+                   color: #2E86AB; 
+                   text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+                   letter-spacing: 3px;">
+            {st.session_state.current_word.upper()}
+        </h1>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.write(f"**Session ID:** {st.session_state.session_id[:8]}...")
-    st.write(f"**User:** {username}")
+    # Audio Features Section
+    st.markdown("---")
+    st.header("🎵 Audio Features")
+    
+    # TTS Controls
+    st.subheader("🔊 Text-to-Speech")
+    
+    col_tts1, col_tts2 = st.columns(2)
+    
+    with col_tts1:
+        if st.button("🔤 Spell and Read Word", key="spell_word"):
+            if st.session_state.current_word:
+                try:
+                    spell_word_with_highlighting(
+                        st.session_state.current_word,
+                        slow_letters=slow_letters,
+                        slow_word=slow_word
+                    )
+                    st.success("🔤 Word spelled and read!")
+                except Exception as e:
+                    st.error(f"❌ TTS Error: {e}")
+    
+    with col_tts2:
+        if st.button("🔢 Read Word Only", key="read_word_only"):
+            if st.session_state.current_word:
+                with st.spinner("🔊 Speaking..."):
+                    try:
+                        tts = gTTS(
+                            text=st.session_state.current_word,
+                            lang='en',
+                            slow=slow_word
+                        )
+                        
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                            tts.save(f.name)
+                            playsound(f.name)
+                            os.remove(f.name)
+                        
+                        st.success("🔢 Word read!")
+                    except Exception as e:
+                        st.error(f"❌ TTS Error: {e}")
+    
+    # Pronunciation feedback
+    if st.button("💡 Get Pronunciation Help", key="pronunciation_help"):
+        with st.spinner("Getting pronunciation help..."):
+            feedback = get_pronunciation_feedback(st.session_state.current_word)
+        
+        st.subheader("💡 Pronunciation Help")
+        st.markdown(feedback)
+    
+    # ========================================
+    # 🎤 SPEECH RECOGNITION SECTION
+    # ========================================
+    st.markdown("---")
+    st.header("🎤 Speech Recognition Practice")
+    
+    # Word Display Card
+    st.markdown(f"""
+    <div style='text-align:center; margin:10px 0; padding:15px;
+                background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
+                border-radius:15px; border:1px solid rgba(255,255,255,0.2);'>
+        <p style='font-size:18px; color:#ddd; margin-bottom:5px;'>Target Word:</p>
+        <p style='font-size:40px; font-weight:bold; color:#fff; letter-spacing:5px; margin:0;'>
+            {st.session_state.current_word.upper()}
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Two columns for the two different modes
+    col_speech1, col_speech2 = st.columns(2)
+    
+    # --- MODE 1: SPELLING (Letter by Letter) ---
+    with col_speech1:
+        st.subheader("🔤 Spelling")
+        st.caption("Say: C... A... T...")
+        if st.button("🎤 Practice Spelling", key="btn_spell_practice"):
+            feedback = recognize_speech_unified(
+                st.session_state.current_word, 
+                mode="spelling", 
+                slow_speed=slow_word
+            )
+            if feedback:
+                # Calculate Score
+                correct = sum(1 for s in feedback.values() if s == "correct")
+                total = len(feedback)
+                st.metric("Spelling Accuracy", f"{int(correct/total*100)}%")
+
+    # --- MODE 2: PRONUNCIATION (Whole Word) ---
+    with col_speech2:
+        st.subheader("🗣️ Pronunciation")
+        st.caption(f"Say: {st.session_state.current_word}")
+        if st.button("🎤 Practice Speaking", key="btn_pronounce_practice"):
+            feedback = recognize_speech_unified(
+                st.session_state.current_word, 
+                mode="pronunciation", 
+                slow_speed=slow_word
+            )
 
 # Footer
 st.markdown("---")

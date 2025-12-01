@@ -20,8 +20,8 @@ class DyslexiaTTS:
     def speak_text(self, word):
         """
         Spell and pronounce a given word or phrase.
-        Handles multi-word phrases properly.
-        Speaks letter-by-letter first, then the whole word/phrase.
+        Handles multi-word phrases properly INCLUDING spaces.
+        Speaks letter-by-letter AND spaces, then the whole word/phrase.
         """
         word = word.strip()
         if not word or word.lower() in self.spoken_words:
@@ -35,21 +35,28 @@ class DyslexiaTTS:
              tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f_word:
 
             try:
-                # 1️⃣ Spell letter by letter (skip spaces)
-                # Extract only alphanumeric characters for spelling
-                letters_only = [char for char in word.upper() if char.isalnum()]
-                letters_spaced = " ".join(letters_only)
+                # 1️⃣ Spell character by character INCLUDING spaces
+                # Build a list of what to say for each character
+                chars_to_speak = []
+                for char in word.upper():
+                    if char == ' ':
+                        chars_to_speak.append('SPACE')
+                    elif char.isalnum():
+                        chars_to_speak.append(char)
+                    # Ignore other special characters
                 
-                print(f"  Letters: {letters_spaced}")
+                chars_spaced = " ".join(chars_to_speak)
                 
-                tts_letters = gTTS(text=letters_spaced, lang=self.lang, slow=self.slow_letters)
+                print(f"  Characters: {chars_spaced}")
+                
+                tts_letters = gTTS(text=chars_spaced, lang=self.lang, slow=self.slow_letters)
                 tts_letters.save(f_letters.name)
                 playsound(f_letters.name)
 
                 time.sleep(0.5)  # Pause between spelling and full word
 
-                # 2️⃣ Speak full word/phrase
-                print(f"  Full word: {word}")
+                # 2️⃣ Speak full word/phrase exactly as it is
+                print(f"  Full word/phrase: {word}")
                 
                 tts_word = gTTS(text=word, lang=self.lang, slow=self.slow_word)
                 tts_word.save(f_word.name)
